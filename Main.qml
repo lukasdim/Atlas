@@ -13,8 +13,8 @@ import QtQuick.VirtualKeyboard
 
 ApplicationWindow {
     id: root
-    width: 1024
-    height: 600
+    width: 1280
+    height: 800
     visible: true
     title: "Cocktail Atlas"
 
@@ -36,17 +36,6 @@ ApplicationWindow {
     readonly property color creamWash:  Qt.rgba(0.91, 0.87, 0.78, 0.04)
     readonly property color hairline:   Qt.rgba(0.91, 0.87, 0.78, 0.10)
 
-    FontLoader {
-        id: bodoni
-        source: Qt.resolvedUrl("fonts/jetbrainsmono-variable.ttf")
-        onStatusChanged: {
-            if (status === FontLoader.Ready)
-                console.log("Bodoni loaded:", name)
-            else if (status === FontLoader.Error)
-                console.log("Bodoni FAILED to load from:", source)
-        }
-    }
-
     FontLoader { id: displayFont; source: "fonts/bodonimoda-variable.ttf" }
     FontLoader { id: bodyFont;    source: "fonts/outfit-variable.ttf" }
     FontLoader { id: monoFont;    source: "fonts/jetbrainsmono-variable.ttf" }
@@ -66,8 +55,7 @@ ApplicationWindow {
 
     // Number of categories from categoryOrder shown on the first row
     // (plus the "All" chip and the expand toggle). Tune to taste.
-    readonly property int firstRowCount: 4
-
+    readonly property int firstRowCount: 5
     // ===================== DATA =====================
     readonly property var categoryOrder: [
         "Spritz & Bubbles", "Margaritas & Agave", "Tropical & Tiki",
@@ -639,107 +627,118 @@ ApplicationWindow {
         }
 
         // ---------- Scrollable content ----------
-        ScrollView {
+        ListView {
+            id: mainList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            model: root.currentGroups
+            spacing: 44
+            topMargin: 32
+            bottomMargin: 72
+            // Pre-render one screen-height worth of delegates above and below
+            // the viewport so fast flings don't show blank frames.
+            cacheBuffer: root.height
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
+            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
 
-            Column {
-                width: root.width
-                spacing: 44
-                topPadding: 32
-                bottomPadding: 72
+            TapHandler {
+                onTapped: searchField.focus = false
+            }
 
-                TapHandler {
-                    onTapped: searchField.focus = false
+            // ---- Category group delegate ----
+            delegate: Column {
+                width: mainList.width - 56
+                x: 28
+                spacing: 12
+
+                Item {
+                    width: parent.width
+                    height: 56
+                    Text {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 12
+                        text: modelData.category
+                        font.family: root.fDisplay()
+                        font.pixelSize: 36
+                        color: root.creamHi
+                    }
+                    // Section drink count: Bodoni Bold instead of mono.
+                    Text {
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 18
+                        text: modelData.drinks.length + (modelData.drinks.length === 1 ? " DRINK" : " DRINKS")
+                        font.family: root.fDisplayBold()
+                        font.pixelSize: 12
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1.6
+                        color: root.cream
+                        opacity: 0.55
+                    }
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: 1
+                        color: root.goldFaint
+                    }
                 }
 
-                Repeater {
-                    model: root.currentGroups
+                Text {
+                    width: parent.width
+                    text: root.categoryBlurbs[modelData.category] || ""
+                    font.family: root.fBody()
+                    font.italic: true
+                    font.pixelSize: 13
+                    color: root.cream
+                    opacity: 0.6
+                    wrapMode: Text.WordWrap
+                    bottomPadding: 12
+                }
 
-                    delegate: Column {
-                        x: 28
-                        width: root.width - 56
-                        spacing: 12
+                // ---- Card-row list (non-interactive; sized to content) ----
+                ListView {
+                    id: cardsListView
+                    width: parent.width
+                    height: contentHeight
+                    spacing: 16
+                    interactive: false
+                    property int cols: root.width > 720 ? 2 : 1
+                    model: root.buildCardRows(modelData.drinks, cardsListView.cols)
 
-                        Item {
-                            width: parent.width
-                            height: 56
-                            Text {
-                                anchors.left: parent.left
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 12
-                                text: modelData.category
-                                font.family: root.fDisplay()
-                                font.pixelSize: 36
-                                color: root.creamHi
-                            }
-                            // Section drink count: Bodoni Bold instead of mono.
-                            Text {
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 18
-                                text: modelData.drinks.length + (modelData.drinks.length === 1 ? " DRINK" : " DRINKS")
-                                font.family: root.fDisplayBold()
-                                font.pixelSize: 12
-                                font.weight: Font.Bold
-                                font.letterSpacing: 1.6
-                                color: root.cream
-                                opacity: 0.55
-                            }
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                width: parent.width
-                                height: 1
-                                color: root.goldFaint
-                            }
-                        }
+                    delegate: Row {
+                        id: cardRow
+                        // Cache cols from the ListView so nested DrinkCard
+                        // bindings never need to reach back up by id name —
+                        // id references break when multiple delegate instances
+                        // exist in the same document scope.
+                        property int cols: ListView.view.cols
+                        width: ListView.view.width
+                        spacing: 16
+                        property var rowData: modelData
 
-                        Text {
-                            width: parent.width
-                            text: root.categoryBlurbs[modelData.category] || ""
-                            font.family: root.fBody()
-                            font.italic: true
-                            font.pixelSize: 13
-                            color: root.cream
-                            opacity: 0.6
-                            wrapMode: Text.WordWrap
-                            bottomPadding: 12
-                        }
-
-                        Column {
-                            id: cardsCol
-                            width: parent.width
-                            spacing: 16
-                            property int cols: root.width > 720 ? 2 : 1
-
-                            Repeater {
-                                model: root.buildCardRows(modelData.drinks, cardsCol.cols)
-                                delegate: Row {
-                                    id: cardRow
-                                    width: cardsCol.width
-                                    spacing: 16
-                                    property var rowData: modelData
-
-                                    Repeater {
-                                        model: cardRow.rowData.drinks
-                                        delegate: DrinkCard {
-                                            width: (cardRow.width - cardRow.spacing * (cardsCol.cols - 1)) / cardsCol.cols
-                                            drink: modelData
-                                            forcedIngredients: cardRow.rowData.maxIngredients
-                                        }
-                                    }
-                                }
+                        Repeater {
+                            model: cardRow.rowData.drinks
+                            delegate: DrinkCard {
+                                width: (cardRow.width - cardRow.spacing * (cardRow.cols - 1)) / cardRow.cols
+                                drink: modelData
+                                forcedIngredients: cardRow.rowData.maxIngredients
                             }
                         }
                     }
                 }
+            }
+
+            // ---- Footer: empty state + legal disclaimer ----
+            footer: Column {
+                width: mainList.width
+                spacing: 0
 
                 Item {
-                    width: root.width - 56
-                    height: visible ? 220 : 0
+                    x: 28
+                    width: mainList.width - 56
+                    height: root.currentGroups.length === 0 ? 220 : 0
                     visible: root.currentGroups.length === 0
                     Text {
                         anchors.centerIn: parent
@@ -755,7 +754,7 @@ ApplicationWindow {
                 // Footer: Bodoni Bold italic for consistency with subtitle.
                 Text {
                     x: 28
-                    width: root.width - 56
+                    width: mainList.width - 56
                     text: "Portions are estimates based on standard bartending conventions —\nactual ship pours vary by bar and bartender."
                     font.family: root.fDisplayBold()
                     font.pixelSize: 12
