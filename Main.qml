@@ -41,17 +41,23 @@ ApplicationWindow {
     FontLoader { id: monoFont;    source: "fonts/jetbrainsmono-variable.ttf" }
 
 
-    function fDisplay()     { return displayFont.status     === FontLoader.Ready ? displayFont.name     : "Times New Roman" }
-    // probably need to replace all, but this is easier for testing
-    function fDisplayBold() { return fDisplay() }
-    function fBody()        { return bodyFont.status        === FontLoader.Ready ? bodyFont.name        : "Helvetica" }
-    function fMono()        { return monoFont.status        === FontLoader.Ready ? monoFont.name        : "Courier New" }
+    // Font names cached as bindings. A property binding only re-evaluates
+    // when its dependencies (FontLoader.status / .name) change, whereas a
+    // function call in `font.family: root.fontDisplay` was re-invoked on
+    // every Text instantiation. With ~30 Texts on screen this matters on Pi.
+    readonly property string fontDisplay:     displayFont.status === FontLoader.Ready ? displayFont.name : "Times New Roman"
+    readonly property string fontDisplayBold: fontDisplay
+    readonly property string fontBody:        bodyFont.status    === FontLoader.Ready ? bodyFont.name    : "Helvetica"
+    readonly property string fontMono:        monoFont.status    === FontLoader.Ready ? monoFont.name    : "Courier New"
 
     // ===================== STATE =====================
     property string activeCategory: "All"
     property string searchText: ""
     property bool   categoriesExpanded: false
     readonly property var currentGroups: filteredGroups()
+    // Shared across every per-group inner ListView so the width breakpoint
+    // is evaluated once, not once per visible group delegate.
+    readonly property int cardCols: root.width > 720 ? 2 : 1
 
     // Number of categories from categoryOrder shown on the first row
     // (plus the "All" chip and the expand toggle). Tune to taste.
@@ -265,12 +271,17 @@ ApplicationWindow {
         return out
     }
 
-    function categoryCount(cat) {
-        if (cat === "All") return drinks.length
-        var n = 0
-        for (var i = 0; i < drinks.length; i++)
-            if (drinks[i].c === cat) n++
-        return n
+    // Precomputed per-category counts. The previous categoryCount(cat)
+    // helper did a linear scan of all drinks on every call, and it was
+    // called once per chip (12 chips × ~60 drinks ≈ 720 ops). This map
+    // is built once and re-evaluated only if `drinks` changes.
+    readonly property var categoryCounts: {
+        var counts = { "All": drinks.length }
+        for (var i = 0; i < drinks.length; i++) {
+            var c = drinks[i].c
+            counts[c] = (counts[c] || 0) + 1
+        }
+        return counts
     }
 
     function buildCardRows(rowDrinks, cols) {
@@ -314,8 +325,10 @@ ApplicationWindow {
             anchors.centerIn: parent
             spacing: 7
             Text {
+                renderType: Text.NativeRendering
+                textFormat: Text.PlainText
                 text: chip.label
-                font.family: root.fDisplayBold()
+                font.family: root.fontDisplayBold
                 font.pixelSize: 12
                 font.weight: Font.Bold
                 font.letterSpacing: 1.2
@@ -323,8 +336,10 @@ ApplicationWindow {
                 color: chip.active ? root.bgDark : root.cream
             }
             Text {
+                renderType: Text.NativeRendering
+                textFormat: Text.PlainText
                 text: chip.chipCount
-                font.family: root.fDisplayBold()
+                font.family: root.fontDisplayBold
                 font.pixelSize: 12
                 font.weight: Font.Bold
                 color: chip.active ? root.bgDark : root.cream
@@ -366,8 +381,10 @@ ApplicationWindow {
             anchors.centerIn: parent
             spacing: 8
             Text {
+                renderType: Text.NativeRendering
+                textFormat: Text.PlainText
                 text: toggle.expanded ? "Less" : "More"
-                font.family: root.fDisplayBold()
+                font.family: root.fontDisplayBold
                 font.pixelSize: 14
                 font.weight: Font.Bold
                 font.italic: true
@@ -375,8 +392,10 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
+                renderType: Text.NativeRendering
+                textFormat: Text.PlainText
                 text: toggle.expanded ? "−" : "+"
-                font.family: root.fDisplayBold()
+                font.family: root.fontDisplayBold
                 font.pixelSize: 16
                 font.weight: Font.Bold
                 color: root.bgDark
@@ -402,7 +421,7 @@ ApplicationWindow {
         property bool hovered: false
 
         readonly property int actualIngredients: (drink.i || []).length
-        readonly property int rowH: 34
+        readonly property int rowH: 42
         readonly property int padV: 22
         readonly property int padH: 22
 
@@ -442,30 +461,36 @@ ApplicationWindow {
                 implicitHeight: Math.max(nameText.implicitHeight, priceText.implicitHeight + 4)
 
                 Text {
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
                     id: nameText
                     anchors.left: parent.left
                     anchors.right: priceText.left
                     anchors.rightMargin: 14
                     text: card.drink.n || ""
-                    font.family: root.fDisplayBold()
+                    font.family: root.fontDisplayBold
                     font.weight: Font.Bold
                     font.pixelSize: 28
                     color: root.creamHi
                     wrapMode: Text.WordWrap
                 }
                 Text {
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
                     id: priceText
                     anchors.right: parent.right
                     anchors.top: parent.top
                     anchors.topMargin: 6
                     text: "$" + (card.drink.p || 0)
-                    font.family: root.fMono()
+                    font.family: root.fontMono
                     font.pixelSize: 14
                     color: root.gold
                 }
             }
 
             Text {
+                renderType: Text.NativeRendering
+                textFormat: Text.PlainText
                 id: sourceText
                 width: parent.width
                 height: 0
@@ -487,19 +512,23 @@ ApplicationWindow {
                         visible: index < (card.drink.i.length - 1)
                     }
                     Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData[0]
-                        font.family: root.fBody()
-                        font.pixelSize: 14
+                        font.family: root.fontBody
+                        font.pixelSize: 18
                         color: root.cream
                     }
                     Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData[1]
-                        font.family: root.fMono()
-                        font.pixelSize: 12
+                        font.family: root.fontMono
+                        font.pixelSize: 18
                         color: modelData[1] ? root.gold : root.cream
                         opacity: 0.78
                     }
@@ -533,15 +562,17 @@ ApplicationWindow {
                 Text {
                     text: "The <i>Cocktail</i> Atlas"
                     textFormat: Text.RichText
-                    font.family: root.fDisplay()
+                    font.family: root.fontDisplay
                     font.pixelSize: 48
                     lineHeight: 0.92
                     color: root.creamHi
                 }
                 // Subtitle: now Bodoni Bold italic for editorial polish.
                 Text {
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
                     text: root.drinks.length + " drinks · " + root.categoryOrder.length + " categories"
-                    font.family: root.fDisplayBold()
+                    font.family: root.fontDisplayBold
                     font.pixelSize: 13
                     font.weight: Font.Bold
                     font.italic: true
@@ -568,7 +599,7 @@ ApplicationWindow {
                     placeholderText: "Search drinks or ingredients…"
                     color: root.cream
                     placeholderTextColor: Qt.rgba(0.91, 0.87, 0.78, 0.4)
-                    font.family: root.fBody()
+                    font.family: root.fontBody
                     font.pixelSize: 14
                     selectByMouse: true
                     padding: 12
@@ -587,7 +618,7 @@ ApplicationWindow {
 
                     CategoryChip {
                         label: "All"
-                        chipCount: root.categoryCount("All")
+                        chipCount: root.categoryCounts["All"] || 0
                         active: root.activeCategory === "All"
                         onClicked: root.activeCategory = "All"
                     }
@@ -595,7 +626,7 @@ ApplicationWindow {
                         model: root.categoryOrder.slice(0, root.firstRowCount)
                         delegate: CategoryChip {
                             label: modelData
-                            chipCount: root.categoryCount(modelData)
+                            chipCount: root.categoryCounts[modelData] || 0
                             active: root.activeCategory === modelData
                             onClicked: root.activeCategory = modelData
                         }
@@ -617,7 +648,7 @@ ApplicationWindow {
                         model: root.categoryOrder.slice(root.firstRowCount)
                         delegate: CategoryChip {
                             label: modelData
-                            chipCount: root.categoryCount(modelData)
+                            chipCount: root.categoryCounts[modelData] || 0
                             active: root.activeCategory === modelData
                             onClicked: root.activeCategory = modelData
                         }
@@ -656,21 +687,25 @@ ApplicationWindow {
                     width: parent.width
                     height: 56
                     Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
                         anchors.left: parent.left
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 12
                         text: modelData.category
-                        font.family: root.fDisplay()
+                        font.family: root.fontDisplay
                         font.pixelSize: 36
                         color: root.creamHi
                     }
                     // Section drink count: Bodoni Bold instead of mono.
                     Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 18
                         text: modelData.drinks.length + (modelData.drinks.length === 1 ? " DRINK" : " DRINKS")
-                        font.family: root.fDisplayBold()
+                        font.family: root.fontDisplayBold
                         font.pixelSize: 12
                         font.weight: Font.Bold
                         font.letterSpacing: 1.6
@@ -686,9 +721,11 @@ ApplicationWindow {
                 }
 
                 Text {
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
                     width: parent.width
                     text: root.categoryBlurbs[modelData.category] || ""
-                    font.family: root.fBody()
+                    font.family: root.fontBody
                     font.italic: true
                     font.pixelSize: 13
                     color: root.cream
@@ -704,7 +741,7 @@ ApplicationWindow {
                     height: contentHeight
                     spacing: 16
                     interactive: false
-                    property int cols: root.width > 720 ? 2 : 1
+                    property int cols: root.cardCols
                     model: root.buildCardRows(modelData.drinks, cardsListView.cols)
 
                     delegate: Row {
@@ -741,9 +778,11 @@ ApplicationWindow {
                     height: root.currentGroups.length === 0 ? 220 : 0
                     visible: root.currentGroups.length === 0
                     Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
                         anchors.centerIn: parent
                         text: "Nothing matches. Try another search."
-                        font.family: root.fDisplay()
+                        font.family: root.fontDisplay
                         font.italic: true
                         font.pixelSize: 24
                         color: root.cream
@@ -753,10 +792,12 @@ ApplicationWindow {
 
                 // Footer: Bodoni Bold italic for consistency with subtitle.
                 Text {
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
                     x: 28
                     width: mainList.width - 56
                     text: "Portions are estimates based on standard bartending conventions —\nactual ship pours vary by bar and bartender."
-                    font.family: root.fDisplayBold()
+                    font.family: root.fontDisplayBold
                     font.pixelSize: 12
                     font.weight: Font.Bold
                     font.italic: true

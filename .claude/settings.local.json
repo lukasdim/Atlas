@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(findstr /c:\"renderType: Text.NativeRendering\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")",
+      "Bash(findstr /n /c:\"textFormat: Text.PlainText\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")",
+      "Bash(findstr /n /c:\"root.fDisplay\\\\b\" /c:\"root.fBody\\\\b\" /c:\"root.fMono\\\\b\" /c:\"root.categoryCount\\(\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")"
+    ]
+  }
+}
