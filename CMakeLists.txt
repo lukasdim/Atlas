@@ -18,6 +18,7 @@ qt_add_qml_module(appAtlas
     URI Atlas
     QML_FILES
         Main.qml
+        Test.qml
     RESOURCES
         images/gradient.png
         fonts/bodonimoda-variable.ttf
