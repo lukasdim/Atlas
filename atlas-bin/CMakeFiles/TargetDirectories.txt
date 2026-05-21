@@ -1,0 +1,5 @@
+/home/baruser/Atlas/atlas-bin/CMakeFiles/atlas.dir
+/home/baruser/Atlas/atlas-bin/CMakeFiles/edit_cache.dir
+/home/baruser/Atlas/atlas-bin/CMakeFiles/rebuild_cache.dir
+/home/baruser/Atlas/atlas-bin/CMakeFiles/atlas_autogen_timestamp_deps.dir
+/home/baruser/Atlas/atlas-bin/CMakeFiles/atlas_autogen.dir
