@@ -3,7 +3,13 @@
     "allow": [
       "Bash(findstr /c:\"renderType: Text.NativeRendering\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")",
       "Bash(findstr /n /c:\"textFormat: Text.PlainText\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")",
-      "Bash(findstr /n /c:\"root.fDisplay\\\\b\" /c:\"root.fBody\\\\b\" /c:\"root.fMono\\\\b\" /c:\"root.categoryCount\\(\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")"
+      "Bash(findstr /n /c:\"root.fDisplay\\\\b\" /c:\"root.fBody\\\\b\" /c:\"root.fMono\\\\b\" /c:\"root.categoryCount\\(\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\")",
+      "Bash(Get-ChildItem -Path D:\\\\QTProjects\\\\Atlas -Recurse -Include \"*.qml\", \"*.js\", \"*.json\" -Exclude \"*build*\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(cmake --build build --config Release)",
+      "Bash(cmake --build .)",
+      "PowerShell(& \"D:\\\\QT\\\\6.5.3\\\\mingw_64\\\\bin\\\\qmllint.exe\" \"D:\\\\QTProjects\\\\Atlas\\\\Main.qml\" 2>&1)",
+      "Bash(Get-Content \"D:\\\\QTProjects\\\\Atlas\\\\CMakeLists.txt\")"
     ]
   }
 }

@@ -1,15 +1,8 @@
-// CocktailAtlas.qml — QML port of the React cocktail reference (v3).
-//
-// v3 changes:
-//   • First-row-only category display with an expand/collapse toggle button
-//   • Small uppercase labels switched to Bodoni Moda Bold for editorial polish
-//   • Optional: drop BodoniModa-Bold.ttf into fonts/ for a true bold weight;
-//     otherwise Qt synthesises bold from the Regular file.
-
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.VirtualKeyboard
+import "drinks.js" as DrinksDB
 
 ApplicationWindow {
     id: root
@@ -20,7 +13,7 @@ ApplicationWindow {
 
     background: Image {
         source: "images/gradient.png"
-        fillMode: Image.Stretch        // use PreserveAspectCrop if you'd rather not distort it
+        fillMode: Image.Stretch
         asynchronous: true
         cache: true
     }
@@ -35,16 +28,12 @@ ApplicationWindow {
     readonly property color goldBright: Qt.rgba(0.83, 0.66, 0.37, 0.85)
     readonly property color creamWash:  Qt.rgba(0.91, 0.87, 0.78, 0.04)
     readonly property color hairline:   Qt.rgba(0.91, 0.87, 0.78, 0.10)
+    readonly property color orange:     "#d4622a"
 
     FontLoader { id: displayFont; source: "fonts/bodonimoda-variable.ttf" }
     FontLoader { id: bodyFont;    source: "fonts/outfit-variable.ttf" }
     FontLoader { id: monoFont;    source: "fonts/jetbrainsmono-variable.ttf" }
 
-
-    // Font names cached as bindings. A property binding only re-evaluates
-    // when its dependencies (FontLoader.status / .name) change, whereas a
-    // function call in `font.family: root.fontDisplay` was re-invoked on
-    // every Text instantiation. With ~30 Texts on screen this matters on Pi.
     readonly property string fontDisplay:     displayFont.status === FontLoader.Ready ? displayFont.name : "Times New Roman"
     readonly property string fontDisplayBold: fontDisplay
     readonly property string fontBody:        bodyFont.status    === FontLoader.Ready ? bodyFont.name    : "Helvetica"
@@ -55,13 +44,67 @@ ApplicationWindow {
     property string searchText: ""
     property bool   categoriesExpanded: false
     readonly property var currentGroups: filteredGroups()
-    // Shared across every per-group inner ListView so the width breakpoint
-    // is evaluated once, not once per visible group delegate.
     readonly property int cardCols: root.width > 720 ? 2 : 1
-
-    // Number of categories from categoryOrder shown on the first row
-    // (plus the "All" chip and the expand toggle). Tune to taste.
     readonly property int firstRowCount: 5
+
+    // Drink data and altered-recipe state
+    property var drinks: []
+    property var alteredRecipes: ({})
+    property var preferredVersions: ({})
+    property var openDrink: null
+
+    // Add-new-cocktail panel state
+    property bool   addPanelOpen:      false
+    property string newDrinkCategory:  ""
+
+    // File I/O helper (C++ QML_ELEMENT registered to the Atlas module)
+    FileIO { id: io }
+
+    // Working model for editable ingredients while the detail panel is open
+    ListModel { id: alteredIngredientsModel }
+
+    // Working model for ingredient rows in the "add new cocktail" panel
+    ListModel { id: newDrinkIngredientsModel }
+
+    // Debounce search input so filteredGroups() (which also runs
+    // buildCardRows for every category) fires at most once per 200 ms
+    // instead of on every keystroke — critical on the Pi's single-core.
+    Timer {
+        id: searchDebounce
+        interval: 200
+        repeat: false
+        onTriggered: root.searchText = searchField.text
+    }
+
+    // ===================== STARTUP =====================
+    // On first run: drinks.json doesn't exist yet → use bundled defaults.
+    // On subsequent runs: load from the saved file so alterations persist.
+    Component.onCompleted: {
+        var saved = io.read(io.drinksPath)
+        if (saved.length > 0)
+            loadDrinksJson(saved)
+        else
+            drinks = DrinksDB.data
+    }
+
+    // Parses a full drinks JSON string (which may include "altered"/"pref"
+    // fields added by saveDetailPanel) and restores all state.
+    function loadDrinksJson(jsonText) {
+        var raw = JSON.parse(jsonText)
+        var loadedDrinks  = []
+        var loadedAltered = {}
+        var loadedPrefs   = {}
+        for (var i = 0; i < raw.length; i++) {
+            var d = raw[i]
+            loadedDrinks.push({ n: d.n, s: d.s, c: d.c, p: d.p, i: d.i })
+            if (d.altered) loadedAltered[d.n] = d.altered
+            if (d.pref)    loadedPrefs[d.n]   = d.pref
+        }
+        drinks           = loadedDrinks
+        alteredRecipes   = loadedAltered
+        preferredVersions = loadedPrefs
+    }
+
     // ===================== DATA =====================
     readonly property var categoryOrder: [
         "Spritz & Bubbles", "Margaritas & Agave", "Tropical & Tiki",
@@ -83,173 +126,21 @@ ApplicationWindow {
         "Aperitifs (Neat)":          "Bitter Italian aperitivos served straight."
     })
 
-    readonly property var drinks: [
-        // SPRITZ & BUBBLES
-        { n: "Aperol Spritz", s: "Bellini's", c: "Spritz & Bubbles", p: 11,
-          i: [["Aperol","2 oz"],["Val d'Oca Prosecco","3 oz"],["Soda water","1 oz"],["Orange slice","garnish"]] },
-        { n: "Hugo Spritz", s: "Bellini's", c: "Spritz & Bubbles", p: 11,
-          i: [["St-Germain Elderflower","1 oz"],["Fresh lime juice","0.5 oz"],["Val d'Oca Prosecco","3 oz"],["Soda water","1 oz"],["Mint sprig","garnish"]] },
-        { n: "Raspberry Lemonade", s: "Bellini's", c: "Spritz & Bubbles", p: 13,
-          i: [["Absolut Raspberry","1.5 oz"],["Limoncello","0.5 oz"],["Fresh lime juice","0.5 oz"],["Lemonade","3 oz"]] },
-        { n: "Summer in Italy", s: "Bellini's", c: "Spritz & Bubbles", p: 13,
-          i: [["Limoncello","1 oz"],["Aperol","1 oz"],["Val d'Oca Prosecco","3 oz"]] },
-        { n: "Italian Sparrow", s: "Bellini's", c: "Spritz & Bubbles", p: 13,
-          i: [["Aperol","1.5 oz"],["Fresh lemon juice","0.75 oz"],["Val d'Oca Prosecco","3 oz"]] },
-        { n: "Red Ferrari", s: "Bellini's", c: "Spritz & Bubbles", p: 13,
-          i: [["Aperol","1.5 oz"],["Fresh grapefruit juice","1 oz"],["Fresh lemon juice","0.5 oz"],["Val d'Oca Prosecco","3 oz"]] },
-        { n: "Limecello Spritz", s: "Bellini's", c: "Spritz & Bubbles", p: 14,
-          i: [["Villa Massa Limoncello","1.5 oz"],["Prosecco","3 oz"],["Betty Buzz Meyer Lemon","1.5 oz"],["Mint","5-7 leaves"]] },
-        { n: "Hampton Spritz", s: "Pool Bar / Crooners", c: "Spritz & Bubbles", p: 14,
-          i: [["Hampton Water Bubbly Rosé","3 oz"],["Elderflower liqueur","0.75 oz"],["Fresh lime juice","0.5 oz"],["Betty Buzz Sparkling Grapefruit","1.5 oz"],["Raspberries","3-4"],["Mint","5 leaves"]] },
-        { n: "Frozen Aperol Spritz", s: "Pool Bar", c: "Spritz & Bubbles", p: 13,
-          i: [["Aperol","2 oz"],["Prosecco","3 oz"],["Orange juice","1 oz"],["Club soda","1 oz"],["Ice","blended"]] },
-        { n: "Aperol Selection Tower", s: "Bellini's", c: "Spritz & Bubbles", p: 35,
-          i: [["Aperol Spritz","1 serving"],["Italian Sparrow","1 serving"],["Red Ferrari","1 serving"],["Secret spritz","1 serving"],["Serves 2",""]] },
-        { n: "Floral Selection Tower", s: "Bellini's", c: "Spritz & Bubbles", p: 35,
-          i: [["Hugo Spritz","1 serving"],["Passion Lilly","1 serving"],["Summer in Italy","1 serving"],["Secret spritz","1 serving"],["Serves 2",""]] },
-
-        // MARGARITAS & AGAVE
-        { n: "24K Margarita", s: "Pool Bar / Crooners", c: "Margaritas & Agave", p: 14,
-          i: [["Pantalones Tequila","1.5 oz"],["Cointreau","0.5 oz"],["Grand Marnier","0.25 oz"],["Fresh lemon juice","0.5 oz"],["Fresh lime juice","0.5 oz"],["Gold flakes","garnish"]] },
-        { n: "Guava Margarita", s: "Pool Bar", c: "Margaritas & Agave", p: 14,
-          i: [["Patrón Silver","1.5 oz"],["Cointreau","0.5 oz"],["Fresh lime juice","0.75 oz"],["Guava purée","1 oz"]] },
-        { n: "Coconut Margarita", s: "Pool Bar", c: "Margaritas & Agave", p: 15,
-          i: [["Patrón Silver","1.5 oz"],["Triple Sec","0.5 oz"],["Fresh lime juice","0.75 oz"],["Coconut cream","1 oz"]] },
-        { n: "Grilled Pineapple Margarita", s: "Pool Bar", c: "Margaritas & Agave", p: 18,
-          i: [["Pantalones Blanco","1.5 oz"],["Cointreau","0.5 oz"],["Fresh lime juice","0.75 oz"],["Grilled pineapple juice","1 oz"],["Agave","0.25 oz"]] },
-        { n: "Meili Paloma 2.0", s: "Pool Bar", c: "Margaritas & Agave", p: 14,
-          i: [["Meili Vodka","1.5 oz"],["Fresh lime juice","0.75 oz"],["Agave","0.5 oz"],["Jalapeño slices","2-3"],["Betty Buzz Grapefruit Soda","3 oz"]] },
-        { n: "Truly Caliente Fresca", s: "Pool Bar", c: "Margaritas & Agave", p: 12,
-          i: [["Truly Strawberry Lemonade","4 oz"],["Patrón Silver","1 oz"],["Fresh lime juice","0.5 oz"],["Jalapeño slices","2-3"],["Mint","5 leaves"]] },
-        { n: "Sea Legs", s: "Pool Bar", c: "Margaritas & Agave", p: 20,
-          i: [["Pantalones Reposado","1.5 oz"],["Maraschino liqueur","0.5 oz"],["Fresh lime juice","0.5 oz"],["Fresh grapefruit juice","1 oz"],["Agave","0.25 oz"],["Soda water","1 oz"]] },
-        { n: "Pants on Fire", s: "Pool Bar / Crooners", c: "Margaritas & Agave", p: 20,
-          i: [["Pantalones Reposado","1.5 oz"],["Campari","0.5 oz"],["Fresh lime juice","0.75 oz"],["Smoked paprika agave","0.5 oz"]] },
-        { n: "Lavender Smoke", s: "Crooners", c: "Margaritas & Agave", p: 17,
-          i: [["Ilegal Mezcal Reposado","1.5 oz"],["St-Germain liqueur","0.5 oz"],["Fresh lime juice","0.75 oz"],["Lavender syrup","0.5 oz"],["Orgeat","0.25 oz"]] },
-
-        // TROPICAL & TIKI
-        { n: "Passion Satisfaction", s: "Pool Bar", c: "Tropical & Tiki", p: 14,
-          i: [["Crossfire Rum","1.5 oz"],["Licor 43","0.5 oz"],["Honey","0.25 oz"],["Fresh lime juice","0.5 oz"],["Passionfruit purée","0.75 oz"],["Pineapple juice","1 oz"],["Angostura bitters","2 dashes"]] },
-        { n: "Sweetest Sounds", s: "Pool Bar / Crooners", c: "Tropical & Tiki", p: 14,
-          i: [["Crossfire Rum","1.5 oz"],["Amaretto","0.5 oz"],["Coconut cream","1 oz"],["Fresh lime juice","0.5 oz"],["Ginger syrup","0.25 oz"]] },
-        { n: "Southern Bond", s: "Pool Bar", c: "Tropical & Tiki", p: 14,
-          i: [["Brother's Bond Bourbon","1 oz"],["Malibu Coconut Rum","0.75 oz"],["Mango purée","1 oz"],["Coconut milk","1 oz"],["Fresh lime juice","0.5 oz"],["Mint","5 leaves"]] },
-        { n: "Jungle Bird", s: "Pool Bar", c: "Tropical & Tiki", p: 12,
-          i: [["Bacardi White Rum","1 oz"],["Bacardi Spiced Rum","0.5 oz"],["Campari","0.75 oz"],["Fresh lime juice","0.5 oz"],["Pineapple juice","1.5 oz"]] },
-        { n: "Truly Pineapple & Coconut Daiquiri", s: "Pool Bar", c: "Tropical & Tiki", p: 12,
-          i: [["Truly Hard Seltzer","3 oz"],["Malibu Rum","1 oz"],["Pineapple juice","1 oz"],["Coconut cream","0.75 oz"],["Orgeat","0.25 oz"]] },
-        { n: "Peanut Jungle Ball", s: "Pool Bar", c: "Tropical & Tiki", p: 15,
-          i: [["Screwball Peanut Butter Whisky","1 oz"],["Campari","0.5 oz"],["Falernum","0.5 oz"],["Orgeat","0.25 oz"],["Fresh lemon juice","0.5 oz"],["Fresh lime juice","0.25 oz"],["Dark rum float","0.5 oz"]] },
-        { n: "I Can't Feel the Rain", s: "Pool Bar", c: "Tropical & Tiki", p: 15,
-          i: [["Ketel One Vodka","1.5 oz"],["Peach purée","0.75 oz"],["Pineapple juice","1 oz"],["Fresh lemon juice","0.5 oz"],["Honey","0.25 oz"]] },
-        { n: "Tropical Alibi", s: "Pool Bar / Crooners", c: "Tropical & Tiki", p: 15,
-          i: [["Sláinte Irish Whiskey","1.5 oz"],["Banana liqueur","0.5 oz"],["Coconut milk","1 oz"],["Pineapple juice","1 oz"],["Fresh lime juice","0.5 oz"],["Angostura bitters","2 dashes"]] },
-        { n: "Aperol-Colada", s: "Pool Bar", c: "Tropical & Tiki", p: 18,
-          i: [["Malibu Rum","1 oz"],["Aperol","0.75 oz"],["Pineapple juice","1.5 oz"],["Coconut cream","1 oz"],["Fresh lime juice","0.5 oz"],["Orgeat","0.25 oz"]] },
-        { n: "Passion Tree", s: "Pool Bar", c: "Tropical & Tiki", p: 18,
-          i: [["Absolut Vanilla","1.5 oz"],["Chinola Passion Liqueur","0.5 oz"],["Passion fruit purée","0.75 oz"],["Fresh lemon juice","0.5 oz"],["Prosecco","2 oz"]] },
-        { n: "Baileys Colada", s: "Pool Bar", c: "Tropical & Tiki", p: 17,
-          i: [["Baileys","1.5 oz"],["Coconut cream","1 oz"],["Pineapple juice","2 oz"],["Ice","blended"]] },
-
-        // SOURS & CITRUS
-        { n: "Passion Lilly", s: "Bellini's", c: "Sours & Citrus", p: 14,
-          i: [["Montenegro Amaro","1 oz"],["Italicus Bergamot","0.75 oz"],["Fresh lemon juice","0.75 oz"],["Passion fruit purée","0.5 oz"],["Vanilla syrup","0.25 oz"],["Val d'Oca Prosecco","2 oz"]] },
-        { n: "Honey Sweet Bourbon", s: "Pool Bar", c: "Sours & Citrus", p: 14,
-          i: [["Brother's Bond Bourbon","1.5 oz"],["Aperol","0.5 oz"],["Peach purée","0.5 oz"],["Honey","0.25 oz"],["Fresh lemon juice","0.75 oz"]] },
-        { n: "Classic Cosmo", s: "Crooners", c: "Sours & Citrus", p: 12,
-          i: [["Absolut Elyx","1.5 oz"],["Cointreau","0.5 oz"],["Cranberry juice","0.75 oz"],["Fresh lime juice","0.5 oz"]] },
-        { n: "French Martini", s: "Crooners", c: "Sours & Citrus", p: 12,
-          i: [["Absolut Elyx","1.5 oz"],["Chambord","0.5 oz"],["Pineapple juice","1.5 oz"]] },
-        { n: "Clover Club", s: "Crooners", c: "Sours & Citrus", p: 15,
-          i: [["Bombay Gin","1.5 oz"],["Chambord","0.5 oz"],["Fresh lemon juice","0.75 oz"],["Raspberry purée","0.5 oz"],["Agave","0.25 oz"],["Egg white","0.5 oz (opt)"]] },
-        { n: "Figs & Honey", s: "Crooners", c: "Sours & Citrus", p: 14,
-          i: [["Absolut Elyx","1.5 oz"],["Fresh lemon juice","0.75 oz"],["Honey-thyme syrup","0.5 oz"],["Fig jam","1 bar spoon"]] },
-        { n: "The Rose", s: "Crooners", c: "Sours & Citrus", p: 20,
-          i: [["Absolut Elyx","1.5 oz"],["Fresh lemon juice","0.75 oz"],["Strawberry purée","1 oz"]] },
-        { n: "Strawberry Fields Forever", s: "Crooners / Pool Bar", c: "Sours & Citrus", p: 15,
-          i: [["Meili Vodka","1.5 oz"],["Basil","4 leaves"],["Strawberries","3 muddled"],["Agave","0.25 oz"],["Elderflower liqueur","0.5 oz"],["Betty Buzz Sparkling Lime","1.5 oz"]] },
-        { n: "Sgroppini", s: "Flair of Italy", c: "Sours & Citrus", p: 14,
-          i: [["Tito's Vodka","1 oz"],["Limoncello","0.75 oz"],["Fresh lemon juice","0.5 oz"],["Peach purée","0.5 oz"],["Honey","0.25 oz"],["Agave","0.25 oz"]] },
-        { n: "Frose", s: "Pool Bar", c: "Sours & Citrus", p: 15,
-          i: [["Tito's Vodka","1 oz"],["Hampton Water Rosé","3 oz"],["Strawberry purée","1 oz"],["Pear purée","0.5 oz"],["Ice","blended"]] },
-        { n: "Lychee Vodka Mojito", s: "Pool Bar", c: "Sours & Citrus", p: 15,
-          i: [["Tito's Vodka","1.5 oz"],["Lychee juice","1 oz"],["Fresh lime juice","0.5 oz"],["Mint","8 leaves"],["Soda water","1 oz"]] },
-        { n: "State Fair", s: "Pool Bar", c: "Sours & Citrus", p: 16,
-          i: [["Absolut Citron","1 oz"],["Hendrick's Gin","0.5 oz"],["Peach Schnapps","0.5 oz"],["Fresh lime juice","0.5 oz"],["Cranberry juice","1 oz"]] },
-
-        // FLORAL & BOTANICAL
-        { n: "Violette Haze", s: "Crooners", c: "Floral & Botanical", p: 19,
-          i: [["Hendrick's Gin","1.5 oz"],["Crème de Violette","0.5 oz"],["Fresh lemon juice","0.75 oz"],["Cucumber slices","3"]] },
-        { n: "Sailing Through the Orchids", s: "Crooners", c: "Floral & Botanical", p: 19,
-          i: [["Grey Goose La Poire","1 oz"],["St-Germain liqueur","0.5 oz"],["Empress Gin","0.5 oz"],["Cointreau","0.25 oz"],["Fresh lemon juice","0.5 oz"],["Pear purée","0.5 oz"],["Yuzu bitters","2 dashes"]] },
-        { n: "Roma", s: "Flair of Italy", c: "Floral & Botanical", p: 15,
-          i: [["Hendrick's Gin","1.5 oz"],["St-Germain liqueur","0.5 oz"],["Limoncello","0.5 oz"],["Raspberries","3-4 muddled"]] },
-        { n: "Italicize This", s: "Flair of Italy", c: "Floral & Botanical", p: 18,
-          i: [["Italicus Bergamot Liqueur","2 oz"],["Fresh lime juice","0.5 oz"],["San Benedetto sparkling water","3 oz"]] },
-
-        // STIRRED & SPIRIT-FORWARD
-        { n: "Crooners Signature 007", s: "Crooners", c: "Stirred & Spirit-Forward", p: 14,
-          i: [["Elyx or Tanqueray Gin","2.5 oz"],["Olive brine","0.25 oz"],["Olive","garnish"]] },
-        { n: "Chairman of the Board", s: "Crooners", c: "Stirred & Spirit-Forward", p: 16,
-          i: [["Grey Goose Vodka","1 oz"],["Tanqueray Gin","1 oz"],["Cointreau","0.5 oz"]] },
-        { n: "Carajillo Old Fashioned", s: "Crooners", c: "Stirred & Spirit-Forward", p: 18,
-          i: [["Bacardi 8","1 oz"],["Jack Daniel's","1 oz"],["Harvey's Bristol Cream","0.5 oz"],["Coffee tincture","0.25 oz"],["Orange blood syrup","0.25 oz"]] },
-        { n: "Brooklyn Nights", s: "Crooners", c: "Stirred & Spirit-Forward", p: 19,
-          i: [["Woodford Reserve Rye","2 oz"],["Carpano Antica","0.75 oz"],["Orange bitters","2 dashes"],["Luxardo cherry","garnish"]] },
-        { n: "Whispers of Lapsang", s: "Crooners", c: "Stirred & Spirit-Forward", p: 19,
-          i: [["Woodford Rye","1.5 oz"],["Bacardi 8","0.5 oz"],["Fresh lemon juice","0.5 oz"],["Lapsang tea syrup","0.5 oz"],["Angostura bitters","2 dashes"]] },
-        { n: "Renaissance", s: "Flair of Italy", c: "Stirred & Spirit-Forward", p: 19,
-          i: [["Hennessy VS","1.5 oz"],["Limoncello","0.5 oz"],["Carpano Antica","0.5 oz"],["Peach bitters","2 dashes"]] },
-
-        // DESSERT & CREAM
-        { n: "Rum Brulee", s: "Crooners", c: "Dessert & Cream", p: 14,
-          i: [["Appleton Rum","1.5 oz"],["Crème de Cacao","0.5 oz"],["Banane du Brésil","0.5 oz"],["Walnut bitters","2 dashes"]] },
-        { n: "Cask and Coco", s: "Crooners", c: "Dessert & Cream", p: 15,
-          i: [["Jameson","1.5 oz"],["Licor 43","0.5 oz"],["Crème de Cacao","0.5 oz"],["Salted caramel syrup","0.25 oz"]] },
-        { n: "Ferrero", s: "Crooners", c: "Dessert & Cream", p: 15,
-          i: [["Absolut Vanilla","1 oz"],["Licor 43 Chocolate","0.5 oz"],["Baileys","0.5 oz"],["Frangelico","0.5 oz"],["Nutella","1 bar spoon"]] },
-        { n: "Orange Dreams", s: "Flair of Italy", c: "Dessert & Cream", p: 17,
-          i: [["Absolut Vanilla","1 oz"],["Orangecello","1 oz"],["Cream","1 oz"]] },
-
-        // COFFEE
-        { n: "Golden Café Cappuccino", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","3 oz"],["Milk foam","2 oz"],["Vanilla syrup","0.25 oz"],["Turmeric","pinch"],["Ginger","pinch"],["Cinnamon","pinch"]] },
-        { n: "Honey Lavender Latte", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","6 oz"],["Lavender syrup","0.5 oz"],["Honey","0.25 oz"]] },
-        { n: "Mocha Caramel Latte", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","6 oz"],["Chocolate syrup","0.5 oz"],["Caramel syrup","0.5 oz"]] },
-        { n: "Tiramisu Cappuccino", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","3 oz"],["Milk foam","2 oz"],["Tiramisu syrup","0.5 oz"],["Cocoa powder","dusting"]] },
-        { n: "Nutella Cappuccino", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","3 oz"],["Milk foam","2 oz"],["Nutella","1 bar spoon"]] },
-        { n: "Pink Latte", s: "Specialty Coffees", c: "Coffee", p: 6,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Steamed milk","6 oz"],["Vanilla syrup","0.25 oz"],["Dragon fruit purée","0.5 oz"]] },
-
-        // SPIRITED COFFEE
-        { n: "Carajillo", s: "Spirited Coffees", c: "Spirited Coffee", p: 15,
-          i: [["Licor 43","1.5 oz"],["Lavazza espresso","1 oz / 1 shot"],["Ice","for shaking"]] },
-        { n: "Caballero", s: "Spirited Coffees", c: "Spirited Coffee", p: 13,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Amaretto","1 oz"],["Cream float","0.5 oz"]] },
-        { n: "Espresso Martini", s: "Spirited Coffees", c: "Spirited Coffee", p: 15,
-          i: [["Tito's Vodka","1.5 oz"],["Kahlúa","0.5 oz"],["Lavazza espresso","1 oz / 1 shot"],["Simple syrup","0.25 oz"],["Salt","pinch"]] },
-        { n: "Espresso 43", s: "Spirited Coffees", c: "Spirited Coffee", p: 15,
-          i: [["Lavazza espresso","1 oz / 1 shot"],["Licor 43","1 oz"],["Vodka","0.5 oz"]] },
-
-        // APERITIFS (NEAT)
-        { n: "Aperol (neat)", s: "Flair of Italy – Plus Package", c: "Aperitifs (Neat)", p: 9,
-          i: [["Aperol","2 oz"],["Served on rocks",""]] },
-        { n: "Campari (neat)", s: "Flair of Italy – Plus Package", c: "Aperitifs (Neat)", p: 9,
-          i: [["Campari","2 oz"],["Served on rocks",""]] }
-    ]
-
     // ===================== FILTER / GROUP LOGIC =====================
     function filteredGroups() {
+        // Reading cardCols here registers it as a binding dependency so
+        // currentGroups automatically recomputes on a window-width change.
+        var cols = cardCols
+
         var list = drinks
         if (activeCategory !== "All")
             list = list.filter(function(d) { return d.c === activeCategory })
-        if (searchText.trim().length > 0) {
-            var q = searchText.toLowerCase()
+
+        // Trim once; calling trim() + toLowerCase() inside the hot filter
+        // loop would allocate a new string per drink per keystroke.
+        var trimmed = searchText.trim()
+        if (trimmed.length > 0) {
+            var q = trimmed.toLowerCase()
             list = list.filter(function(d) {
                 if (d.n.toLowerCase().indexOf(q) >= 0) return true
                 for (var k = 0; k < d.i.length; k++)
@@ -257,24 +148,29 @@ ApplicationWindow {
                 return false
             })
         }
+
         var groups = {}
         for (var j = 0; j < list.length; j++) {
             var d = list[j]
             if (!groups[d.c]) groups[d.c] = []
             groups[d.c].push(d)
         }
+
+        // Build cardRows here (once, at filter time) rather than inside
+        // each ListView delegate (scroll time).  Delegates then do a
+        // simple property read: modelData.cardRows — zero JS per scroll.
         var out = []
         for (var ci = 0; ci < categoryOrder.length; ci++) {
             var cat = categoryOrder[ci]
-            if (groups[cat]) out.push({ category: cat, drinks: groups[cat] })
+            if (groups[cat]) out.push({
+                category: cat,
+                drinks:   groups[cat],
+                cardRows: buildCardRows(groups[cat], cols)
+            })
         }
         return out
     }
 
-    // Precomputed per-category counts. The previous categoryCount(cat)
-    // helper did a linear scan of all drinks on every call, and it was
-    // called once per chip (12 chips × ~60 drinks ≈ 720 ops). This map
-    // is built once and re-evaluated only if `drinks` changes.
     readonly property var categoryCounts: {
         var counts = { "All": drinks.length }
         for (var i = 0; i < drinks.length; i++) {
@@ -297,6 +193,97 @@ ApplicationWindow {
             rows.push({ drinks: batch, maxIngredients: maxIng })
         }
         return rows
+    }
+
+    // ===================== ALTERED RECIPE HELPERS =====================
+    function setPreferredVersion(drinkName, version) {
+        var v = Object.assign({}, preferredVersions)
+        v[drinkName] = version
+        preferredVersions = v
+    }
+
+    // Serialises the current drinks + any altered/pref metadata to a JS
+    // array ready for JSON.stringify().  Shared by saveDetailPanel and
+    // saveNewDrink so the file format stays consistent.
+    function buildSaveOutput() {
+        var output = []
+        for (var j = 0; j < drinks.length; j++) {
+            var d    = drinks[j]
+            var entry = { n: d.n, s: d.s, c: d.c, p: d.p, i: d.i }
+            var alt  = alteredRecipes[d.n]
+            var pref = preferredVersions[d.n]
+            if (alt)  entry.altered = alt
+            if (pref && pref !== "default") entry.pref = pref
+            output.push(entry)
+        }
+        return output
+    }
+
+    // Opens the detail panel and seeds the editable model.
+    // Closes the add panel first if it happens to be open.
+    function openDetailPanel(drink) {
+        if (addPanelOpen) addPanelOpen = false
+        alteredIngredientsModel.clear()
+        var src = alteredRecipes[drink.n] || drink.i
+        for (var i = 0; i < src.length; i++)
+            alteredIngredientsModel.append({ ingName: src[i][0], ingAmount: src[i][1] })
+        openDrink = drink
+    }
+
+    // Save: persist altered edits to memory + write the full dataset to
+    // drinks.json next to the executable.
+    function saveDetailPanel() {
+        var drinkName = openDrink.n
+        var newIngredients = []
+        for (var i = 0; i < alteredIngredientsModel.count; i++) {
+            var item = alteredIngredientsModel.get(i)
+            newIngredients.push([item.ingName, item.ingAmount])
+        }
+        var newAltered = Object.assign({}, alteredRecipes)
+        newAltered[drinkName] = newIngredients
+        alteredRecipes = newAltered
+        io.write(io.drinksPath, JSON.stringify(buildSaveOutput(), null, 2))
+        openDrink = null
+    }
+
+    // Cancel: discard unsaved edits and close.
+    function cancelDetailPanel() {
+        openDrink = null
+    }
+
+    // ===================== ADD NEW COCKTAIL HELPERS =====================
+    function openAddPanel() {
+        if (openDrink !== null) openDrink = null   // close detail panel first
+        searchField.focus = false
+        Qt.inputMethod.hide()
+        newDrinkCategory = root.categoryOrder[0]
+        newDrinkIngredientsModel.clear()
+        newDrinkIngredientsModel.append({ ingName: "", ingAmount: "" })
+        newDrinkIngredientsModel.append({ ingName: "", ingAmount: "" })
+        newDrinkIngredientsModel.append({ ingName: "", ingAmount: "" })
+        addPanelOpen = true
+    }
+
+    function cancelAddPanel() {
+        Qt.inputMethod.hide()
+        addPanelOpen = false
+    }
+
+    // Called by the Add Drink button inside the panel; receives validated
+    // values already read from the TextFields.
+    function saveNewDrink(name, source, price, ingredients) {
+        var newDrinkObj = {
+            n: name, s: source,
+            c: newDrinkCategory,
+            p: price,
+            i: ingredients
+        }
+        var newDrinks = drinks.slice()
+        newDrinks.push(newDrinkObj)
+        drinks = newDrinks                                         // triggers currentGroups + categoryCounts
+        io.write(io.drinksPath, JSON.stringify(buildSaveOutput(), null, 2))
+        Qt.inputMethod.hide()
+        addPanelOpen = false
     }
 
     // ===================== INLINE COMPONENTS =====================
@@ -352,14 +339,15 @@ ApplicationWindow {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             hoverEnabled: true
-            onClicked: chip.clicked()
+            onClicked: {
+                chip.clicked()
+                Qt.inputMethod.hide()
+            }
             onEntered: chip.hovered = true
             onExited:  chip.hovered = false
         }
     }
 
-    // Expand/collapse toggle. Visually distinct from CategoryChip:
-    // filled gold background + italic "More"/"Less" label + chevron.
     component ExpandToggle: Rectangle {
         id: toggle
         property bool expanded: false
@@ -408,7 +396,10 @@ ApplicationWindow {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             hoverEnabled: true
-            onClicked: toggle.clicked()
+            onClicked: {
+                toggle.clicked()
+                Qt.inputMethod.hide()
+            }
             onEntered: toggle.hovered = true
             onExited:  toggle.hovered = false
         }
@@ -419,8 +410,20 @@ ApplicationWindow {
         property var drink: ({})
         property int forcedIngredients: 0
         property bool hovered: false
+        signal clicked()
 
-        readonly property int actualIngredients: (drink.i || []).length
+        // Shows altered or default ingredients based on user preference
+        readonly property var effectiveIngredients: {
+            if (!drink.n) return []
+            var pref = root.preferredVersions[drink.n] || "default"
+            if (pref === "altered") {
+                var alt = root.alteredRecipes[drink.n]
+                if (alt) return alt
+            }
+            return drink.i || []
+        }
+
+        readonly property int actualIngredients: effectiveIngredients.length
         readonly property int rowH: 42
         readonly property int padV: 22
         readonly property int padH: 22
@@ -445,8 +448,21 @@ ApplicationWindow {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
             onEntered: card.hovered = true
             onExited:  card.hovered = false
+            onClicked: card.clicked()
+        }
+
+        // Gold dot when the altered version is set as the active view
+        Rectangle {
+            visible: (root.preferredVersions[card.drink.n] || "default") === "altered"
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 8
+            width: 7; height: 7; radius: 4
+            color: root.gold
+            opacity: 0.85
         }
 
         Column {
@@ -499,7 +515,7 @@ ApplicationWindow {
             }
 
             Repeater {
-                model: card.drink.i || []
+                model: card.effectiveIngredients
                 delegate: Item {
                     width: cardCol.width
                     height: card.rowH
@@ -509,7 +525,7 @@ ApplicationWindow {
                         width: parent.width
                         height: 1
                         color: root.hairline
-                        visible: index < (card.drink.i.length - 1)
+                        visible: index < (card.effectiveIngredients.length - 1)
                     }
                     Text {
                         renderType: Text.NativeRendering
@@ -567,7 +583,6 @@ ApplicationWindow {
                     lineHeight: 0.92
                     color: root.creamHi
                 }
-                // Subtitle: now Bodoni Bold italic for editorial polish.
                 Text {
                     renderType: Text.NativeRendering
                     textFormat: Text.PlainText
@@ -578,6 +593,51 @@ ApplicationWindow {
                     font.italic: true
                     color: root.cream
                     opacity: 0.55
+                }
+            }
+
+            // Text items don't consume pointer events, so this MouseArea
+            // receives every tap on the banner and dismisses the keyboard.
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    searchField.focus = false
+                    Qt.inputMethod.hide()
+                }
+            }
+
+            // Orange "Add" button — sits on top of the dismiss MouseArea so
+            // it captures its own clicks without triggering the dismiss.
+            Rectangle {
+                id: addDrinkHeaderBtn
+                anchors.right: parent.right
+                anchors.rightMargin: 28
+                anchors.verticalCenter: parent.verticalCenter
+                width: addDrinkHeaderLabel.implicitWidth + 28
+                height: 38
+                radius: 2
+                color: addDrinkHeaderMA.pressed        ? Qt.darker(root.orange, 1.2)
+                     : addDrinkHeaderMA.containsMouse  ? Qt.lighter(root.orange, 1.12)
+                     : root.orange
+                Behavior on color { ColorAnimation { duration: 120 } }
+
+                Text {
+                    id: addDrinkHeaderLabel
+                    renderType: Text.NativeRendering
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "+ Add"
+                    font.family: root.fontDisplayBold
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                    color: "white"
+                }
+                MouseArea {
+                    id: addDrinkHeaderMA
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openAddPanel()
                 }
             }
         }
@@ -608,10 +668,9 @@ ApplicationWindow {
                         border.color: Qt.rgba(0.83, 0.66, 0.37, 0.2)
                         radius: 2
                     }
-                    onTextChanged: root.searchText = text
+                    onTextChanged: searchDebounce.restart()
                 }
 
-                // First row: All + first N categories + expand toggle
                 Flow {
                     width: parent.width
                     spacing: 7
@@ -637,8 +696,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Second row: remaining categories, toggled by ExpandToggle.
-                // visible:false makes the parent Column reclaim its space.
                 Flow {
                     width: parent.width
                     spacing: 7
@@ -668,17 +725,20 @@ ApplicationWindow {
             spacing: 44
             topMargin: 32
             bottomMargin: 72
-            // Pre-render one screen-height worth of delegates above and below
-            // the viewport so fast flings don't show blank frames.
-            cacheBuffer: root.height
+            // Keep ~one card-height's worth of pre-built delegates on each
+            // side of the viewport.  root.height (800 px) was twice as
+            // much as needed and doubled the Pi's delegate-creation work.
+            cacheBuffer: 360
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
 
             TapHandler {
-                onTapped: searchField.focus = false
+                onTapped: {
+                    searchField.focus = false
+                    Qt.inputMethod.hide()
+                }
             }
 
-            // ---- Category group delegate ----
             delegate: Column {
                 width: mainList.width - 56
                 x: 28
@@ -698,7 +758,6 @@ ApplicationWindow {
                         font.pixelSize: 36
                         color: root.creamHi
                     }
-                    // Section drink count: Bodoni Bold instead of mono.
                     Text {
                         renderType: Text.NativeRendering
                         textFormat: Text.PlainText
@@ -735,23 +794,18 @@ ApplicationWindow {
                     bottomPadding: 12
                 }
 
-                // ---- Card-row list (non-interactive; sized to content) ----
                 ListView {
                     id: cardsListView
                     width: parent.width
                     height: contentHeight
                     spacing: 16
                     interactive: false
-                    property int cols: root.cardCols
-                    model: root.buildCardRows(modelData.drinks, cardsListView.cols)
+                    // cardRows is pre-computed inside filteredGroups() so
+                    // no JS runs here at scroll time — pure property read.
+                    model: modelData.cardRows
 
                     delegate: Row {
                         id: cardRow
-                        // Cache cols from the ListView so nested DrinkCard
-                        // bindings never need to reach back up by id name —
-                        // id references break when multiple delegate instances
-                        // exist in the same document scope.
-                        property int cols: ListView.view.cols
                         width: ListView.view.width
                         spacing: 16
                         property var rowData: modelData
@@ -759,16 +813,16 @@ ApplicationWindow {
                         Repeater {
                             model: cardRow.rowData.drinks
                             delegate: DrinkCard {
-                                width: (cardRow.width - cardRow.spacing * (cardRow.cols - 1)) / cardRow.cols
+                                width: (cardRow.width - cardRow.spacing * (root.cardCols - 1)) / root.cardCols
                                 drink: modelData
                                 forcedIngredients: cardRow.rowData.maxIngredients
+                                onClicked: root.openDetailPanel(modelData)
                             }
                         }
                     }
                 }
             }
 
-            // ---- Footer: empty state + legal disclaimer ----
             footer: Column {
                 width: mainList.width
                 spacing: 0
@@ -791,7 +845,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Footer: Bodoni Bold italic for consistency with subtitle.
                 Text {
                     renderType: Text.NativeRendering
                     textFormat: Text.PlainText
@@ -806,6 +859,969 @@ ApplicationWindow {
                     opacity: 0.45
                     topPadding: 28
                 }
+            }
+        }
+    }
+
+    // ===================== DETAIL OVERLAY =====================
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.openDrink !== null
+        onActivated: root.cancelDetailPanel()
+    }
+
+    Item {
+        id: detailOverlay
+        anchors.fill: parent
+        z: 20
+        opacity: root.openDrink !== null ? 1.0 : 0.0
+        visible: opacity > 0.0
+
+        Behavior on opacity {
+            NumberAnimation { duration: 180; easing.type: Easing.InOutQuad }
+        }
+
+        // Backdrop — clicking outside cancels (discards unsaved edits)
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0.05, 0.04, 0.03, 0.88)
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    Qt.inputMethod.hide()
+                    root.cancelDetailPanel()
+                }
+            }
+        }
+
+        // Panel
+        Rectangle {
+            id: detailPanel
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 80, 980)
+            color: Qt.rgba(0.09, 0.07, 0.05, 0.98)
+            border.color: root.goldFaint
+            border.width: 1
+            radius: 3
+            clip: true
+
+            // header + two-col area + footer row
+            property int ingCount: root.openDrink ? root.openDrink.i.length : 0
+            height: Math.min(72 + 24 + 44 + ingCount * 42 + 28 + 64, parent.height * 0.92)
+
+            // Swallow clicks so they don't reach the backdrop.
+            // onClicked also hides the keyboard when the user taps any
+            // non-input area inside the panel (header, read-only column, etc.).
+            MouseArea {
+                anchors.fill: parent
+                onClicked: Qt.inputMethod.hide()
+            }
+
+            Column {
+                width: parent.width
+
+                // ---- Header ----
+                Item {
+                    width: parent.width
+                    height: 72
+
+                    Text {
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
+                        anchors.left: parent.left
+                        anchors.leftMargin: 32
+                        anchors.right: panelPrice.left
+                        anchors.rightMargin: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.openDrink ? root.openDrink.n : ""
+                        font.family: root.fontDisplayBold
+                        font.weight: Font.Bold
+                        font.pixelSize: 30
+                        color: root.creamHi
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        id: panelPrice
+                        renderType: Text.NativeRendering
+                        textFormat: Text.PlainText
+                        anchors.right: panelCloseBtn.left
+                        anchors.rightMargin: 20
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.openDrink ? "$" + root.openDrink.p : ""
+                        font.family: root.fontMono
+                        font.pixelSize: 18
+                        color: root.gold
+                    }
+
+                    Rectangle {
+                        id: panelCloseBtn
+                        anchors.right: parent.right
+                        anchors.rightMargin: 24
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 36; height: 36; radius: 18
+                        color: panelCloseBtnMA.containsMouse ? root.goldFaint : "transparent"
+                        border.color: panelCloseBtnMA.containsMouse ? root.gold : root.goldGhost
+                        border.width: 1
+                        Behavior on color { ColorAnimation { duration: 120 } }
+
+                        Text {
+                            renderType: Text.NativeRendering
+                            anchors.centerIn: parent
+                            text: "×"
+                            font.pixelSize: 22
+                            color: root.cream
+                        }
+                        MouseArea {
+                            id: panelCloseBtnMA
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.cancelDetailPanel()
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: 1
+                        color: root.goldFaint
+                    }
+                }
+
+                // ---- Two-column area ----
+                Item {
+                    width: parent.width
+                    height: 24 + 44 + detailPanel.ingCount * 42 + 28
+
+                    // Default column (read-only)
+                    Column {
+                        id: defaultPanelCol
+                        x: 32; y: 24
+                        width: parent.width / 2 - 56
+                        spacing: 0
+
+                        Item {
+                            width: parent.width
+                            height: 44
+
+                            Text {
+                                renderType: Text.NativeRendering
+                                textFormat: Text.PlainText
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "DEFAULT"
+                                font.family: root.fontDisplayBold
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                font.letterSpacing: 1.4
+                                color: root.cream
+                                opacity: 0.5
+                            }
+
+                            Rectangle {
+                                id: useDefaultBtn
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                property bool isActive: root.openDrink
+                                    ? (root.preferredVersions[root.openDrink.n] || "default") === "default"
+                                    : true
+                                width: useDefaultLabel.implicitWidth + 20
+                                height: 28; radius: 2
+                                color: isActive ? root.gold
+                                               : (useDefaultMA.containsMouse ? root.goldFaint : "transparent")
+                                border.color: isActive ? root.gold : root.goldGhost
+                                border.width: 1
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    id: useDefaultLabel
+                                    renderType: Text.NativeRendering
+                                    textFormat: Text.PlainText
+                                    anchors.centerIn: parent
+                                    text: useDefaultBtn.isActive ? "✓ My View" : "Use as View"
+                                    font.family: root.fontDisplayBold
+                                    font.pixelSize: 11
+                                    font.weight: Font.Bold
+                                    color: useDefaultBtn.isActive ? root.bgDark : root.cream
+                                }
+                                MouseArea {
+                                    id: useDefaultMA
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.setPreferredVersion(root.openDrink.n, "default")
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: root.openDrink ? root.openDrink.i : []
+                            delegate: Item {
+                                width: defaultPanelCol.width
+                                height: 42
+
+                                Rectangle {
+                                    anchors.bottom: parent.bottom
+                                    width: parent.width; height: 1
+                                    color: root.hairline
+                                    visible: index < (root.openDrink ? root.openDrink.i.length - 1 : 0)
+                                }
+                                Text {
+                                    renderType: Text.NativeRendering
+                                    textFormat: Text.PlainText
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData[0]
+                                    font.family: root.fontBody
+                                    font.pixelSize: 16
+                                    color: root.cream
+                                }
+                                Text {
+                                    renderType: Text.NativeRendering
+                                    textFormat: Text.PlainText
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData[1]
+                                    font.family: root.fontMono
+                                    font.pixelSize: 16
+                                    color: modelData[1] ? root.gold : root.cream
+                                    opacity: 0.78
+                                }
+                            }
+                        }
+                    }
+
+                    // Vertical divider
+                    Rectangle {
+                        x: parent.width / 2; y: 0
+                        width: 1; height: parent.height
+                        color: root.goldFaint
+                    }
+
+                    // Altered column (editable)
+                    Column {
+                        id: alteredPanelCol
+                        x: parent.width / 2 + 24; y: 24
+                        width: parent.width / 2 - 56
+                        spacing: 0
+
+                        Item {
+                            width: parent.width
+                            height: 44
+
+                            Text {
+                                renderType: Text.NativeRendering
+                                textFormat: Text.PlainText
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "ALTERED"
+                                font.family: root.fontDisplayBold
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                font.letterSpacing: 1.4
+                                color: root.cream
+                                opacity: 0.5
+                            }
+
+                            Rectangle {
+                                id: useAlteredBtn
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                property bool isActive: root.openDrink
+                                    ? (root.preferredVersions[root.openDrink.n] || "default") === "altered"
+                                    : false
+                                width: useAlteredLabel.implicitWidth + 20
+                                height: 28; radius: 2
+                                color: isActive ? root.gold
+                                               : (useAlteredMA.containsMouse ? root.goldFaint : "transparent")
+                                border.color: isActive ? root.gold : root.goldGhost
+                                border.width: 1
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    id: useAlteredLabel
+                                    renderType: Text.NativeRendering
+                                    textFormat: Text.PlainText
+                                    anchors.centerIn: parent
+                                    text: useAlteredBtn.isActive ? "✓ My View" : "Use as View"
+                                    font.family: root.fontDisplayBold
+                                    font.pixelSize: 11
+                                    font.weight: Font.Bold
+                                    color: useAlteredBtn.isActive ? root.bgDark : root.cream
+                                }
+                                MouseArea {
+                                    id: useAlteredMA
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.setPreferredVersion(root.openDrink.n, "altered")
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: alteredIngredientsModel
+                            delegate: Item {
+                                width: alteredPanelCol.width
+                                height: 42
+
+                                Rectangle {
+                                    anchors.bottom: parent.bottom
+                                    width: parent.width; height: 1
+                                    color: root.hairline
+                                    visible: index < alteredIngredientsModel.count - 1
+                                }
+
+                                TextField {
+                                    id: nameField
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width * 0.58
+                                    height: 32
+                                    text: model.ingName
+                                    color: root.cream
+                                    font.family: root.fontBody
+                                    font.pixelSize: 16
+                                    leftPadding: 4; rightPadding: 4
+                                    topPadding: 0; bottomPadding: 0
+                                    background: Rectangle {
+                                        color: nameField.activeFocus ? Qt.rgba(0.91, 0.87, 0.78, 0.06) : "transparent"
+                                        border.color: nameField.activeFocus ? root.goldGhost : "transparent"
+                                        radius: 2
+                                    }
+                                    onTextEdited: alteredIngredientsModel.setProperty(index, "ingName", text)
+                                }
+
+                                TextField {
+                                    id: amtField
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width * 0.38
+                                    height: 32
+                                    text: model.ingAmount
+                                    color: root.gold
+                                    font.family: root.fontMono
+                                    font.pixelSize: 16
+                                    horizontalAlignment: Text.AlignRight
+                                    leftPadding: 4; rightPadding: 4
+                                    topPadding: 0; bottomPadding: 0
+                                    background: Rectangle {
+                                        color: amtField.activeFocus ? Qt.rgba(0.91, 0.87, 0.78, 0.06) : "transparent"
+                                        border.color: amtField.activeFocus ? root.goldGhost : "transparent"
+                                        radius: 2
+                                    }
+                                    onTextEdited: alteredIngredientsModel.setProperty(index, "ingAmount", text)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- Footer: Cancel / Save ----
+                Item {
+                    width: parent.width
+                    height: 64
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        width: parent.width; height: 1
+                        color: root.goldFaint
+                    }
+
+                    Row {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 32
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 12
+
+                        // Cancel button
+                        Rectangle {
+                            id: cancelBtn
+                            width: cancelBtnText.implicitWidth + 28
+                            height: 38; radius: 2
+                            color: cancelBtnMA.containsMouse ? root.goldFaint : "transparent"
+                            border.color: cancelBtnMA.containsMouse ? root.gold : root.goldGhost
+                            border.width: 1
+                            Behavior on color       { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+
+                            Text {
+                                id: cancelBtnText
+                                renderType: Text.NativeRendering
+                                textFormat: Text.PlainText
+                                anchors.centerIn: parent
+                                text: "Cancel"
+                                font.family: root.fontDisplayBold
+                                font.pixelSize: 13
+                                font.weight: Font.Bold
+                                color: root.cream
+                            }
+                            MouseArea {
+                                id: cancelBtnMA
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.cancelDetailPanel()
+                            }
+                        }
+
+                        // Save button
+                        Rectangle {
+                            id: saveBtn
+                            width: saveBtnText.implicitWidth + 28
+                            height: 38; radius: 2
+                            color: saveBtnMA.pressed  ? Qt.darker(root.gold, 1.15)
+                                 : saveBtnMA.containsMouse ? root.creamHi
+                                 : root.gold
+                            Behavior on color { ColorAnimation { duration: 120 } }
+
+                            Text {
+                                id: saveBtnText
+                                renderType: Text.NativeRendering
+                                textFormat: Text.PlainText
+                                anchors.centerIn: parent
+                                text: "Save Changes"
+                                font.family: root.fontDisplayBold
+                                font.pixelSize: 13
+                                font.weight: Font.Bold
+                                color: root.bgDark
+                            }
+                            MouseArea {
+                                id: saveBtnMA
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.saveDetailPanel()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ===================== ADD COCKTAIL OVERLAY =====================
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.addPanelOpen
+        onActivated: root.cancelAddPanel()
+    }
+
+    Item {
+        id: addOverlay
+        anchors.fill: parent
+        z: 20
+        opacity: root.addPanelOpen ? 1.0 : 0.0
+        visible: opacity > 0.0
+        Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.InOutQuad } }
+
+        // Backdrop
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0.05, 0.04, 0.03, 0.88)
+            MouseArea {
+                anchors.fill: parent
+                onClicked: { Qt.inputMethod.hide(); root.cancelAddPanel() }
+            }
+        }
+
+        // Panel
+        Rectangle {
+            id: addPanel
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 80, 980)
+            // Height grows with ingredient rows up to 92 % of screen height
+            height: Math.min(addFlickable.contentHeight, parent.height * 0.92)
+            color: Qt.rgba(0.09, 0.07, 0.05, 0.98)
+            border.color: root.goldFaint
+            border.width: 1
+            radius: 3
+            clip: true
+
+            // Swallow clicks + hide keyboard on any dead-zone tap
+            MouseArea { anchors.fill: parent; onClicked: Qt.inputMethod.hide() }
+
+            Flickable {
+                id: addFlickable
+                anchors.fill: parent
+                contentHeight: addContentWrapper.height
+                clip: true
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                // Wrap all content in an Item so that taps on dead zones
+                // (labels, padding, spaces between fields) propagate up to
+                // the background MouseArea instead of disappearing.
+                // Interactive children (TextFields, buttons) accept their own
+                // events and never reach this MouseArea — no keyboard flash.
+                // preventStealing:false lets Flickable reclaim scroll drags.
+                Item {
+                    id: addContentWrapper
+                    width: addFlickable.width
+                    height: addContent.height
+
+                    MouseArea {
+                        anchors.fill: parent
+                        preventStealing: false
+                        onClicked: Qt.inputMethod.hide()
+                    }
+
+                    Column {
+                        id: addContent
+                        width: parent.width
+
+                    // ── Panel header ──────────────────────────────────────
+                    Item {
+                        width: parent.width; height: 72
+
+                        Text {
+                            renderType: Text.NativeRendering
+                            textFormat: Text.PlainText
+                            anchors.left: parent.left; anchors.leftMargin: 32
+                            anchors.right: addPanelCloseBtn.left; anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Add New Cocktail"
+                            font.family: root.fontDisplayBold
+                            font.weight: Font.Bold
+                            font.pixelSize: 26
+                            color: root.creamHi
+                            elide: Text.ElideRight
+                        }
+
+                        Rectangle {
+                            id: addPanelCloseBtn
+                            anchors.right: parent.right; anchors.rightMargin: 24
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 36; height: 36; radius: 18
+                            color: addPanelCloseBtnMA.containsMouse ? root.goldFaint : "transparent"
+                            border.color: addPanelCloseBtnMA.containsMouse ? root.gold : root.goldGhost
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Text {
+                                renderType: Text.NativeRendering
+                                anchors.centerIn: parent; text: "×"
+                                font.pixelSize: 22; color: root.cream
+                            }
+                            MouseArea {
+                                id: addPanelCloseBtnMA
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.cancelAddPanel()
+                            }
+                        }
+
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.goldFaint }
+                    }
+
+                    // ── Name ─────────────────────────────────────────────
+                    Item {
+                        width: parent.width; height: 80
+
+                        Column {
+                            x: 32; y: 14; width: parent.width - 64; spacing: 6
+
+                            Text {
+                                renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                text: "NAME"
+                                font.family: root.fontDisplayBold; font.pixelSize: 11
+                                font.weight: Font.Bold; font.letterSpacing: 1.4
+                                color: root.cream; opacity: 0.5
+                            }
+
+                            TextField {
+                                id: addNameField
+                                width: parent.width; height: 38
+                                color: root.cream
+                                font.family: root.fontBody; font.pixelSize: 16
+                                padding: 10
+                                background: Rectangle {
+                                    color: addNameField.activeFocus ? Qt.rgba(0.91,0.87,0.78,0.08) : Qt.rgba(0.91,0.87,0.78,0.04)
+                                    border.color: addNameField.activeFocus ? root.gold : root.goldGhost
+                                    border.width: 1; radius: 2
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Source + Price ────────────────────────────────────
+                    Item {
+                        width: parent.width; height: 80
+
+                        Column {
+                            x: 32; y: 14
+                            width: Math.round((parent.width - 64) * 0.65); spacing: 6
+
+                            Text {
+                                renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                text: "SOURCE  (optional)"
+                                font.family: root.fontDisplayBold; font.pixelSize: 11
+                                font.weight: Font.Bold; font.letterSpacing: 1.4
+                                color: root.cream; opacity: 0.5
+                            }
+                            TextField {
+                                id: addSourceField
+                                width: parent.width; height: 38
+                                color: root.cream
+                                font.family: root.fontBody; font.pixelSize: 16
+                                padding: 10
+                                background: Rectangle {
+                                    color: addSourceField.activeFocus ? Qt.rgba(0.91,0.87,0.78,0.08) : Qt.rgba(0.91,0.87,0.78,0.04)
+                                    border.color: addSourceField.activeFocus ? root.gold : root.goldGhost
+                                    border.width: 1; radius: 2
+                                }
+                            }
+                        }
+
+                        Column {
+                            x: 32 + Math.round((parent.width - 64) * 0.65) + 16
+                            y: 14
+                            width: parent.width - (32 + Math.round((parent.width - 64) * 0.65) + 16) - 32
+                            spacing: 6
+
+                            Text {
+                                renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                text: "PRICE"
+                                font.family: root.fontDisplayBold; font.pixelSize: 11
+                                font.weight: Font.Bold; font.letterSpacing: 1.4
+                                color: root.cream; opacity: 0.5
+                            }
+                            Row {
+                                spacing: 0
+                                Text {
+                                    renderType: Text.NativeRendering
+                                    text: "$"
+                                    font.family: root.fontMono; font.pixelSize: 16
+                                    color: root.gold; opacity: 0.78
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    leftPadding: 4
+                                }
+                                TextField {
+                                    id: addPriceField
+                                    width: 72; height: 38
+                                    color: root.cream
+                                    font.family: root.fontMono; font.pixelSize: 16
+                                    inputMethodHints: Qt.ImhDigitsOnly
+                                    padding: 6
+                                    background: Rectangle {
+                                        color: addPriceField.activeFocus ? Qt.rgba(0.91,0.87,0.78,0.08) : Qt.rgba(0.91,0.87,0.78,0.04)
+                                        border.color: addPriceField.activeFocus ? root.gold : root.goldGhost
+                                        border.width: 1; radius: 2
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Category ──────────────────────────────────────────
+                    Item {
+                        id: addCategorySection
+                        width: parent.width
+                        height: addCatLabel.implicitHeight + 12 + addCategoryFlow.implicitHeight + 24
+
+                        Text {
+                            id: addCatLabel
+                            renderType: Text.NativeRendering; textFormat: Text.PlainText
+                            x: 32; y: 12
+                            text: "CATEGORY"
+                            font.family: root.fontDisplayBold; font.pixelSize: 11
+                            font.weight: Font.Bold; font.letterSpacing: 1.4
+                            color: root.cream; opacity: 0.5
+                        }
+
+                        Flow {
+                            id: addCategoryFlow
+                            x: 32
+                            y: addCatLabel.y + addCatLabel.implicitHeight + 10
+                            width: parent.width - 64
+                            spacing: 6
+
+                            Repeater {
+                                model: root.categoryOrder
+                                delegate: Rectangle {
+                                    id: catChip
+                                    property bool sel: modelData === root.newDrinkCategory
+                                    width: catChipLabel.implicitWidth + 22; height: 30; radius: 2
+                                    color: sel ? root.gold : (catChipMA.containsMouse ? root.goldFaint : "transparent")
+                                    border.color: sel ? root.gold : root.goldGhost; border.width: 1
+                                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                                    Text {
+                                        id: catChipLabel
+                                        renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        font.family: root.fontDisplayBold; font.pixelSize: 11
+                                        font.weight: Font.Bold
+                                        color: catChip.sel ? root.bgDark : root.cream
+                                    }
+                                    MouseArea {
+                                        id: catChipMA
+                                        anchors.fill: parent; hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root.newDrinkCategory = modelData
+                                            Qt.inputMethod.hide()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Divider ───────────────────────────────────────────
+                    Rectangle { width: parent.width; height: 1; color: root.goldFaint }
+
+                    // ── Ingredients header + "Add Row" button ─────────────
+                    Item {
+                        width: parent.width; height: 52
+
+                        Text {
+                            renderType: Text.NativeRendering; textFormat: Text.PlainText
+                            anchors.left: parent.left; anchors.leftMargin: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "INGREDIENTS"
+                            font.family: root.fontDisplayBold; font.pixelSize: 11
+                            font.weight: Font.Bold; font.letterSpacing: 1.4
+                            color: root.cream; opacity: 0.5
+                        }
+
+                        Rectangle {
+                            id: addRowBtn
+                            anchors.right: parent.right; anchors.rightMargin: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: addRowBtnLabel.implicitWidth + 22; height: 28; radius: 2
+                            color: addRowBtnMA.containsMouse ? root.goldFaint : "transparent"
+                            border.color: addRowBtnMA.containsMouse ? root.gold : root.goldGhost
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 100 } }
+
+                            Text {
+                                id: addRowBtnLabel
+                                renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                anchors.centerIn: parent
+                                text: "+ Add Row"
+                                font.family: root.fontDisplayBold; font.pixelSize: 11
+                                font.weight: Font.Bold; color: root.cream
+                            }
+                            MouseArea {
+                                id: addRowBtnMA
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    Qt.inputMethod.hide()
+                                    newDrinkIngredientsModel.append({ ingName: "", ingAmount: "" })
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Ingredient rows ───────────────────────────────────
+                    Repeater {
+                        model: newDrinkIngredientsModel
+                        delegate: Item {
+                            width: addContent.width; height: 50
+
+                            Rectangle {
+                                anchors.top: parent.top
+                                x: 32; width: parent.width - 64; height: 1
+                                color: root.hairline
+                            }
+
+                            TextField {
+                                id: addIngNameField
+                                x: 32
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width * 0.46
+                                height: 36
+                                text: model.ingName
+                                color: root.cream
+                                font.family: root.fontBody; font.pixelSize: 16
+                                leftPadding: 6; rightPadding: 6
+                                topPadding: 0; bottomPadding: 0
+                                background: Rectangle {
+                                    color: addIngNameField.activeFocus ? Qt.rgba(0.91,0.87,0.78,0.06) : "transparent"
+                                    border.color: addIngNameField.activeFocus ? root.goldGhost : "transparent"
+                                    radius: 2
+                                }
+                                onTextEdited: newDrinkIngredientsModel.setProperty(index, "ingName", text)
+                            }
+
+                            TextField {
+                                id: addIngAmtField
+                                anchors.right: addRemoveBtn.left; anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width * 0.24
+                                height: 36
+                                text: model.ingAmount
+                                color: root.gold
+                                font.family: root.fontMono; font.pixelSize: 16
+                                horizontalAlignment: Text.AlignRight
+                                leftPadding: 6; rightPadding: 6
+                                topPadding: 0; bottomPadding: 0
+                                background: Rectangle {
+                                    color: addIngAmtField.activeFocus ? Qt.rgba(0.91,0.87,0.78,0.06) : "transparent"
+                                    border.color: addIngAmtField.activeFocus ? root.goldGhost : "transparent"
+                                    radius: 2
+                                }
+                                onTextEdited: newDrinkIngredientsModel.setProperty(index, "ingAmount", text)
+                            }
+
+                            Rectangle {
+                                id: addRemoveBtn
+                                anchors.right: parent.right; anchors.rightMargin: 32
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 28; height: 28; radius: 14
+                                visible: newDrinkIngredientsModel.count > 1
+                                color: addRemoveBtnMA.containsMouse ? root.goldFaint : "transparent"
+                                border.color: addRemoveBtnMA.containsMouse ? root.gold : root.goldGhost
+                                border.width: 1
+                                Behavior on color { ColorAnimation { duration: 100 } }
+
+                                Text {
+                                    renderType: Text.NativeRendering
+                                    anchors.centerIn: parent
+                                    text: "−"; font.pixelSize: 18; color: root.cream
+                                }
+                                MouseArea {
+                                    id: addRemoveBtnMA
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        Qt.inputMethod.hide()
+                                        newDrinkIngredientsModel.remove(index)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Footer: Cancel / Add Drink ────────────────────────
+                    Item {
+                        width: parent.width; height: 72
+
+                        Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: root.goldFaint }
+
+                        Row {
+                            anchors.right: parent.right; anchors.rightMargin: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 12
+
+                            // Cancel
+                            Rectangle {
+                                id: addCancelBtn
+                                width: addCancelBtnText.implicitWidth + 28; height: 38; radius: 2
+                                color: addCancelBtnMA.containsMouse ? root.goldFaint : "transparent"
+                                border.color: addCancelBtnMA.containsMouse ? root.gold : root.goldGhost
+                                border.width: 1
+                                Behavior on color        { ColorAnimation { duration: 120 } }
+                                Behavior on border.color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    id: addCancelBtnText
+                                    renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                    anchors.centerIn: parent; text: "Cancel"
+                                    font.family: root.fontDisplayBold; font.pixelSize: 13
+                                    font.weight: Font.Bold; color: root.cream
+                                }
+                                MouseArea {
+                                    id: addCancelBtnMA
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.cancelAddPanel()
+                                }
+                            }
+
+                            // Add Drink (orange)
+                            Rectangle {
+                                id: addDrinkBtn
+                                width: addDrinkBtnText.implicitWidth + 28; height: 38; radius: 2
+                                color: addDrinkBtnMA.pressed       ? Qt.darker(root.orange, 1.2)
+                                     : addDrinkBtnMA.containsMouse ? Qt.lighter(root.orange, 1.12)
+                                     : root.orange
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    id: addDrinkBtnText
+                                    renderType: Text.NativeRendering; textFormat: Text.PlainText
+                                    anchors.centerIn: parent; text: "Add Drink"
+                                    font.family: root.fontDisplayBold; font.pixelSize: 13
+                                    font.weight: Font.Bold; color: "white"
+                                }
+                                MouseArea {
+                                    id: addDrinkBtnMA
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        var name = addNameField.text.trim()
+                                        if (name.length === 0) return   // name required
+
+                                        var ingredients = []
+                                        for (var i = 0; i < newDrinkIngredientsModel.count; i++) {
+                                            var it = newDrinkIngredientsModel.get(i)
+                                            var n  = it.ingName.trim()
+                                            if (n.length > 0)
+                                                ingredients.push([n, it.ingAmount.trim()])
+                                        }
+                                        if (ingredients.length === 0) return   // ≥1 ingredient required
+
+                                        root.saveNewDrink(
+                                            name,
+                                            addSourceField.text.trim(),
+                                            parseInt(addPriceField.text) || 0,
+                                            ingredients
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    } // Column addContent
+                } // Item addContentWrapper
+            } // Flickable addFlickable
+        } // Rectangle addPanel
+    } // Item addOverlay
+
+    // ── Global keyboard-dismiss button ───────────────────────────────────
+    // Appears above the virtual keyboard whenever it is active, for every
+    // text input across the whole app (search, detail panel, add panel).
+    // Tapping it calls Qt.inputMethod.hide() and blurs the active field.
+    Rectangle {
+        id: kbdDoneBtn
+        z: 50                              // above panels (z:20), below keyboard (z:99)
+        visible: inputPanel.active
+        y: inputPanel.y - height - 8       // tracks the keyboard slide animation
+        anchors.right: parent.right
+        anchors.rightMargin: 12
+        width: kbdDoneLabel.implicitWidth + 28
+        height: 38
+        radius: 2
+        color: kbdDoneMA.pressed       ? Qt.darker(root.bgDark, 1.0)
+             : kbdDoneMA.containsMouse ? Qt.rgba(0.09,0.07,0.05,1.0)
+             : Qt.rgba(0.09, 0.07, 0.05, 0.97)
+        border.color: root.gold
+        border.width: 1
+
+        Text {
+            id: kbdDoneLabel
+            renderType: Text.NativeRendering
+            textFormat: Text.PlainText
+            anchors.centerIn: parent
+            text: "Done"
+            font.family: root.fontDisplayBold
+            font.pixelSize: 13
+            font.weight: Font.Bold
+            color: root.gold
+        }
+
+        MouseArea {
+            id: kbdDoneMA
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                root.contentItem.forceActiveFocus()  // blurs the active TextField
+                Qt.inputMethod.hide()
             }
         }
     }
