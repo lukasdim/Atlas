@@ -4,7 +4,11 @@ project(Atlas VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick VirtualKeyboard)
+# VirtualKeyboard is only needed at link-time when the Qt Creator module
+# build is used.  On Pi the QML plugin is loaded dynamically at runtime, so
+# the dev package is not required for a successful cmake/make.
+find_package(Qt6 REQUIRED COMPONENTS Quick)
+find_package(Qt6 OPTIONAL_COMPONENTS VirtualKeyboard)
 
 qt_standard_project_setup(REQUIRES 6.4)
 
@@ -35,9 +39,10 @@ set_target_properties(appAtlas PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
-target_link_libraries(appAtlas
-    PRIVATE Qt6::Quick Qt6::VirtualKeyboard
-)
+target_link_libraries(appAtlas PRIVATE Qt6::Quick)
+if(Qt6VirtualKeyboard_FOUND)
+    target_link_libraries(appAtlas PRIVATE Qt6::VirtualKeyboard)
+endif()
 
 install(TARGETS appAtlas
     BUNDLE DESTINATION .
